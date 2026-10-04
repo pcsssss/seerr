@@ -7023,6 +7023,92 @@ paths:
                       criticsScore:
                         type: number
                         example: 6.5
+  /tv/{tvId}/downloads:
+    get:
+      summary: Get TV episode download diagnostics (manage requests only)
+      tags: [tv]
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: is4k
+          schema: { type: string, enum: ['true', 'false'] }
+        - in: query
+          name: requestId
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Sanitized episode status, queue and bounded history; includes truncation flags
+        '403':
+          description: Manage requests permission required
+  /tv/{tvId}/downloads/search:
+    post:
+      summary: Search interactive Sonarr releases (manage requests only)
+      tags: [tv]
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [is4k, seasonNumber]
+              properties:
+                is4k: { type: boolean }
+                requestId: { type: integer, minimum: 1 }
+                seasonNumber: { type: integer, minimum: 0 }
+                episodeId: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Sanitized release results with five-minute, user-bound selection tokens
+        '400':
+          description: Invalid selection
+        '403':
+          description: Not authorized
+        '409':
+          description: Incomplete queue prevents duplicate checks
+  /tv/{tvId}/downloads/grab:
+    post:
+      summary: Grab a verified cached Sonarr release (manage requests only)
+      tags: [tv]
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                [is4k, seasonNumber, token, confirmRejected, confirmDuplicate]
+              properties:
+                is4k: { type: boolean }
+                requestId: { type: integer, minimum: 1 }
+                seasonNumber: { type: integer, minimum: 0 }
+                episodeId: { type: integer, minimum: 1 }
+                token: { type: string, pattern: '^[a-f0-9]{48}$' }
+                confirmRejected: { type: boolean }
+                confirmDuplicate: { type: boolean }
+      responses:
+        '202':
+          description: Release accepted by Sonarr; not a guarantee of completion
+        '400':
+          description: Invalid selection
+        '403':
+          description: Not authorized
+        '409':
+          description: Expired search or confirmation required
   /tv/{tvId}:
     get:
       summary: Get TV details

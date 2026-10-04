@@ -14,9 +14,12 @@
 .prettierignore
 .vscode
 charts
-config/db/*
-config/logs/*
-config/*.json
+config/**
+!config/.gitkeep
+.env*
+**/*.tsbuildinfo
+next-env.d.ts
+report.xml
 cypress
 dist
 Dockerfile*

@@ -24,6 +24,7 @@ import RequestButton from '@app/components/RequestButton';
 import RequestModal from '@app/components/RequestModal';
 import Slider from '@app/components/Slider';
 import StatusBadge from '@app/components/StatusBadge';
+import DownloadDiagnostics from '@app/components/TvDetails/DownloadDiagnostics';
 import Season from '@app/components/TvDetails/Season';
 import useDeepLinks from '@app/hooks/useDeepLinks';
 import useLocale from '@app/hooks/useLocale';
@@ -799,6 +800,12 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                 </Link>
               ))}
             </div>
+          )}
+          {data.mediaInfo && (
+            <DownloadDiagnostics
+              tvId={data.id}
+              requests={data.mediaInfo.requests ?? []}
+            />
           )}
           <h2 className="py-4">{intl.formatMessage(messages.seasonstitle)}</h2>
           <div className="flex w-full flex-col space-y-2">

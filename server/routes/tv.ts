@@ -10,9 +10,12 @@ import { Watchlist } from '@server/entity/Watchlist';
 import logger from '@server/logger';
 import { mapTvResult } from '@server/models/Search';
 import { mapSeasonWithEpisodes, mapTvDetails } from '@server/models/Tv';
+import tvDownloadRoutes from '@server/routes/tvDownloads';
 import { Router } from 'express';
 
 const tvRoutes = Router();
+
+tvRoutes.use('/:id/downloads', tvDownloadRoutes);
 
 tvRoutes.get('/:id', async (req, res, next) => {
   const tmdb = new TheMovieDb();
