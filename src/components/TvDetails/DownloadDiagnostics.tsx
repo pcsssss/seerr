@@ -9,7 +9,7 @@ import type {
   TvDownloadSearch,
 } from '@server/interfaces/api/tvDownloadInterfaces';
 import axios from 'axios';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
@@ -33,7 +33,14 @@ const messages = defineMessages('components.TvDetails.DownloadDiagnostics', {
     'Could not load Sonarr status. Check the server mapping and try refreshing.',
   unavailable:
     'Sonarr could not complete the operation. Refresh progress before retrying a download.',
-  search: 'Search season releases',
+  search: 'Find sources',
+  picker: 'Sources for {target}',
+  retry: 'Search again',
+  dismiss: 'Close',
+  back: 'Back to sources',
+  expired:
+    'These sources have expired. Search again before selecting a release.',
+  episodeRelease: 'Episode release',
   episodeSearch: 'Find releases',
   searching: 'Searching indexers…',
   hint: 'Missing means no imported file and no visible queue item. Search explicitly to see current results and rejection reasons; this does not explain earlier searches.',
@@ -101,6 +108,11 @@ function DownloadPanel({ tvId, requests }: Props) {
   const [confirmRejected, setConfirmRejected] = useState(false);
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [expired, setExpired] = useState(false);
+  const pendingSearch = useRef<AbortController | undefined>(undefined);
+  const busyRef = useRef(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState('');
   const url = `/api/v1/tv/${tvId}/downloads`;
   const { data, error, mutate, isValidating } = useSWR<TvDownloadDiagnostics>(
@@ -114,11 +126,62 @@ function DownloadPanel({ tvId, requests }: Props) {
   const episodes =
     data?.episodes.filter((e) => e.seasonNumber === seasonNumber) ?? [];
   const reset = () => {
+    pendingSearch.current?.abort();
+    pendingSearch.current = undefined;
+    busyRef.current = false;
+    setBusy(false);
+    setExpired(false);
     setSearch(undefined);
     setTarget(undefined);
     setSelected(undefined);
     setNotice('');
   };
+  useEffect(() => () => pendingSearch.current?.abort(), []);
+  useEffect(() => {
+    if (!search) return;
+    const remaining = Date.parse(search.expiresAt) - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+      setExpired(true);
+      setSelected(undefined);
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const checkExpiry = () => {
+      const left = Date.parse(search.expiresAt) - Date.now();
+      if (left <= 0) {
+        setExpired(true);
+        setSelected(undefined);
+      } else {
+        // Browser timers overflow above ~24 days (including synthetic fixtures).
+        timer = setTimeout(checkExpiry, Math.min(left, 2147483647));
+      }
+    };
+    checkExpiry();
+    return () => clearTimeout(timer);
+  }, [search]);
+  useEffect(() => {
+    if (!target || sending) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (selected) setSelected(undefined);
+      else reset();
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [target, sending, selected]);
+  useEffect(() => {
+    const dialog =
+      pickerRef.current?.querySelector<HTMLElement>('[role="dialog"]');
+    if (!dialog) return;
+    dialog.scrollTop = 0;
+    // Switching list/confirmation must not strand focus on a removed button.
+    const heading = dialog.querySelector<HTMLElement>('#modal-headline');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+  }, [selected, search]);
   const operationError = (e: unknown) => {
     // Only our backend's safe message, never axios' URL/config or upstream response.
     setNotice(
@@ -128,7 +191,7 @@ function DownloadPanel({ tvId, requests }: Props) {
     );
   };
   const find = async (episodeId?: number) => {
-    if (seasonNumber === undefined) return;
+    if (busyRef.current || seasonNumber === undefined) return;
     const ep = episodes.find((e) => e.id === episodeId);
     const nextTarget = {
       seasonNumber,
@@ -140,25 +203,39 @@ function DownloadPanel({ tvId, requests }: Props) {
           })
         : intl.formatMessage(messages.seasonTarget, { number: seasonNumber }),
     };
-    setBusy(true);
     reset();
+    const controller = new AbortController();
+    pendingSearch.current = controller;
+    busyRef.current = true;
+    setBusy(true);
     setTarget(nextTarget);
     try {
-      const response = await axios.post<TvDownloadSearch>(`${url}/search`, {
-        is4k,
-        requestId,
-        seasonNumber,
-        episodeId,
-      });
-      setSearch(response.data);
+      const response = await axios.post<TvDownloadSearch>(
+        `${url}/search`,
+        { is4k, requestId, seasonNumber, episodeId },
+        { signal: controller.signal, timeout: 120000 }
+      );
+      if (pendingSearch.current === controller) setSearch(response.data);
     } catch (e) {
-      operationError(e);
+      if (pendingSearch.current === controller && !axios.isCancel(e))
+        operationError(e);
     } finally {
-      setBusy(false);
+      if (pendingSearch.current === controller) {
+        pendingSearch.current = undefined;
+        busyRef.current = false;
+        setBusy(false);
+      }
     }
   };
   const grab = async () => {
-    if (!selected?.token || !target) return;
+    if (busyRef.current || expired || !selected?.token || !target) return;
+    if (!search || Date.parse(search.expiresAt) <= Date.now()) {
+      setExpired(true);
+      setSelected(undefined);
+      return;
+    }
+    busyRef.current = true;
+    setSending(true);
     setBusy(true);
     try {
       await axios.post(`${url}/grab`, {
@@ -172,6 +249,7 @@ function DownloadPanel({ tvId, requests }: Props) {
       });
       setSelected(undefined);
       setSearch(undefined);
+      setTarget(undefined);
       setNotice(text('sent'));
       await mutate();
     } catch (e) {
@@ -179,6 +257,8 @@ function DownloadPanel({ tvId, requests }: Props) {
       setSearch(undefined);
       operationError(e);
     } finally {
+      busyRef.current = false;
+      setSending(false);
       setBusy(false);
     }
   };
@@ -285,6 +365,7 @@ function DownloadPanel({ tvId, requests }: Props) {
               {text('search')}
             </Button>
           </div>
+          {!target && notice && <p role="status">{notice}</p>}
           {!episodes.length && <p>{text('empty')}</p>}
           <ul className="divide-y divide-gray-700">
             {episodes.map((ep) => (
@@ -359,122 +440,157 @@ function DownloadPanel({ tvId, requests }: Props) {
           <p className="text-sm text-gray-300">{text('historylimit')}</p>
         </>
       )}
-      <div aria-live="polite">
-        {busy && <p>{text(selected ? 'sending' : 'searching')}</p>}
-        {notice && <p role="status">{notice}</p>}
-      </div>
-      {search && target && (
-        <div className="space-y-3">
-          <h3 className="text-lg font-semibold">
-            {intl.formatMessage(messages.results, { target: target.label })}
-          </h3>
-          <p className="text-sm text-gray-300">
-            {intl.formatMessage(messages.expires, {
-              time: intl.formatTime(new Date(search.expiresAt)),
-            })}
-          </p>
-          {search.truncated && <p>{text('resultlimit')}</p>}
-          {!search.releases.length && <p>{text('noresults')}</p>}
-          <ul className="divide-y divide-gray-700">
-            {search.releases.map((release, i) => (
-              <li key={release.token ?? i} className="space-y-2 py-3">
-                <p className="break-words font-semibold">{release.title}</p>
+      <Transition show={!!target}>
+        {target && (
+          <Modal
+            focusTrap
+            ref={pickerRef}
+            title={
+              selected
+                ? text('confirm')
+                : intl.formatMessage(messages.picker, {
+                    target: target.label,
+                  })
+            }
+            onCancel={
+              sending
+                ? undefined
+                : selected
+                  ? () => setSelected(undefined)
+                  : reset
+            }
+            cancelText={text(selected ? 'back' : 'dismiss')}
+            onOk={selected ? grab : undefined}
+            okText={text('send')}
+            okDisabled={
+              busy ||
+              expired ||
+              !!(selected?.rejected && !confirmRejected) ||
+              !!(selected?.duplicate && !confirmDuplicate)
+            }
+            onSecondary={
+              !selected && !busy ? () => find(target.episodeId) : undefined
+            }
+            secondaryText={text('retry')}
+            backgroundClickable={!busy}
+          >
+            <div aria-live="polite">
+              {busy && (
+                <p role="status">{text(sending ? 'sending' : 'searching')}</p>
+              )}
+              {notice && <p role="alert">{notice}</p>}
+            </div>
+            {search && !selected && (
+              <div className="space-y-3">
                 <p className="text-sm text-gray-300">
-                  {release.indexer} · {release.quality} ·{' '}
-                  {(release.size / 1024 ** 3).toFixed(2)} GiB ·{' '}
-                  {release.protocol} ·{' '}
-                  {release.seeders === null
-                    ? text('unknownseeders')
-                    : intl.formatMessage(messages.seeders, {
-                        count: release.seeders,
-                      })}
-                  {release.fullSeason && <> · {text('pack')}</>}
-                </p>
-                <p className="text-sm">
-                  {intl.formatMessage(messages.episodes, {
-                    numbers: release.episodeNumbers.join(', '),
+                  {intl.formatMessage(messages.expires, {
+                    time: intl.formatTime(new Date(search.expiresAt)),
                   })}
                 </p>
-                <p
-                  className={
-                    release.rejected ? 'text-yellow-300' : 'text-gray-300'
-                  }
-                >
-                  {text(release.rejected ? 'rejected' : 'accepted')}
-                </p>
-                {release.rejections.map((reason, j) => (
-                  <p key={j} className="text-sm text-yellow-300">
+                {expired && (
+                  <p role="status" className="text-yellow-300">
+                    {text('expired')}
+                  </p>
+                )}
+                {search.truncated && <p>{text('resultlimit')}</p>}
+                {!search.releases.length && (
+                  <p role="status">{text('noresults')}</p>
+                )}
+                <ul className="divide-y divide-gray-700">
+                  {search.releases.map((release, i) => (
+                    <li key={release.token ?? i} className="space-y-2 py-3">
+                      <p className="break-words font-semibold">
+                        {release.title}
+                      </p>
+                      <p className="text-sm text-gray-300">
+                        {release.indexer} · {release.quality} ·{' '}
+                        {(release.size / 1024 ** 3).toFixed(2)} GiB ·{' '}
+                        {release.protocol} ·{' '}
+                        {release.seeders === null
+                          ? text('unknownseeders')
+                          : intl.formatMessage(messages.seeders, {
+                              count: release.seeders,
+                            })}{' '}
+                        · {text(release.fullSeason ? 'pack' : 'episodeRelease')}
+                      </p>
+                      <p className="text-sm">
+                        {intl.formatMessage(messages.episodes, {
+                          numbers: release.episodeNumbers.join(', '),
+                        })}
+                      </p>
+                      <p
+                        className={
+                          release.rejected ? 'text-yellow-300' : 'text-gray-300'
+                        }
+                      >
+                        {text(release.rejected ? 'rejected' : 'accepted')}
+                      </p>
+                      {release.rejections.map((reason, j) => (
+                        <p key={j} className="text-sm text-yellow-300">
+                          {reason}
+                        </p>
+                      ))}
+                      {release.duplicate && (
+                        <p className="text-yellow-300">{text('duplicate')}</p>
+                      )}
+                      {release.token ? (
+                        <Button
+                          buttonSize="sm"
+                          disabled={busy || expired}
+                          onClick={() => {
+                            if (Date.parse(search.expiresAt) <= Date.now()) {
+                              setExpired(true);
+                              return;
+                            }
+                            setSelected(release);
+                            setConfirmDuplicate(false);
+                            setConfirmRejected(false);
+                          }}
+                        >
+                          {text('select')}
+                        </Button>
+                      ) : (
+                        <p className="text-sm text-gray-300">
+                          {text('notselectable')}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {selected && (
+              <>
+                <p className="break-words font-semibold">{selected.title}</p>
+                <p className="mt-3">{text('confirmbody')}</p>
+                {selected.rejections.map((reason, i) => (
+                  <p key={i} className="mt-2 text-yellow-300">
                     {reason}
                   </p>
                 ))}
-                {release.duplicate && (
-                  <p className="text-yellow-300">{text('duplicate')}</p>
+                {selected.rejected && (
+                  <label className="mt-4 flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      disabled={busy}
+                      checked={confirmRejected}
+                      onChange={(e) => setConfirmRejected(e.target.checked)}
+                    />
+                    <span>{text('rejectconfirm')}</span>
+                  </label>
                 )}
-                {release.token ? (
-                  <Button
-                    buttonSize="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      setSelected(release);
-                      setConfirmDuplicate(false);
-                      setConfirmRejected(false);
-                    }}
-                  >
-                    {text('select')}
-                  </Button>
-                ) : (
-                  <p className="text-sm text-gray-300">
-                    {text('notselectable')}
-                  </p>
+                {selected.duplicate && (
+                  <label className="mt-4 flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      disabled={busy}
+                      checked={confirmDuplicate}
+                      onChange={(e) => setConfirmDuplicate(e.target.checked)}
+                    />
+                    <span>{text('duplicateconfirm')}</span>
+                  </label>
                 )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <Transition show={!!selected}>
-        {selected && (
-          <Modal
-            title={text('confirm')}
-            onCancel={busy ? undefined : () => setSelected(undefined)}
-            onOk={grab}
-            okText={text('send')}
-            cancelText={text('cancel')}
-            okDisabled={
-              busy ||
-              (selected.rejected && !confirmRejected) ||
-              (selected.duplicate && !confirmDuplicate)
-            }
-            backgroundClickable={!busy}
-          >
-            <p className="break-words font-semibold">{selected.title}</p>
-            <p className="mt-3">{text('confirmbody')}</p>
-            {selected.rejections.map((reason, i) => (
-              <p key={i} className="mt-2 text-yellow-300">
-                {reason}
-              </p>
-            ))}
-            {selected.rejected && (
-              <label className="mt-4 flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  disabled={busy}
-                  checked={confirmRejected}
-                  onChange={(e) => setConfirmRejected(e.target.checked)}
-                />
-                <span>{text('rejectconfirm')}</span>
-              </label>
-            )}
-            {selected.duplicate && (
-              <label className="mt-4 flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  disabled={busy}
-                  checked={confirmDuplicate}
-                  onChange={(e) => setConfirmDuplicate(e.target.checked)}
-                />
-                <span>{text('duplicateconfirm')}</span>
-              </label>
+              </>
             )}
           </Modal>
         )}

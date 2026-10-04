@@ -435,22 +435,42 @@ describe('TV release search and grab', () => {
     );
     assert.equal(grab.mock.callCount(), 1);
   });
-  it('shows unmapped results but never gives them a grab token or leaks private fields', async () => {
+  it('filters unrelated seasons/series and unmapped results before the display cap', async () => {
     mock.method(SonarrDownloadsAPI.prototype, 'downloadReleases', async () => [
+      ...Array.from({ length: 101 }, () => ({
+        ...release,
+        mappedSeasonNumber: 3,
+      })),
       {
         ...release,
         mappedSeriesId: 999,
         downloadUrl: 'http://indexer.test?apikey=secret',
-        rejections: ['Failure http://indexer.test?apikey=secret'],
       },
+      { ...release, mappedEpisodeInfo: [] },
+      { ...release, mappedEpisodeInfo: [{ id: 999 }] },
+      release,
     ]);
     const response = await request(app())
       .post(`${path}/search`)
       .send(selection);
     assert.equal(response.status, 200);
-    assert.equal(response.body.releases[0].token, undefined);
+    assert.equal(response.body.releases.length, 1);
+    assert.equal(response.body.releases[0].title, 'Industry S02');
+    assert.ok(response.body.releases[0].token);
+    assert.equal(response.body.truncated, false);
     assert.ok(!response.text.includes('secret'));
     assert.ok(!response.text.includes('downloadUrl'));
+  });
+  it('returns an empty list when no release maps to the selected season/episode', async () => {
+    mock.method(SonarrDownloadsAPI.prototype, 'downloadReleases', async () => [
+      { ...release, mappedSeasonNumber: 3 },
+      { ...release, mappedEpisodeInfo: [{ id: 999 }] },
+    ]);
+    const response = await request(app())
+      .post(`${path}/search`)
+      .send(selection);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.releases, []);
   });
   it('bounds results and prevents grabs with incomplete duplicate information', async () => {
     mock.method(SonarrDownloadsAPI.prototype, 'downloadReleases', async () =>

@@ -213,10 +213,22 @@ routes.post<{ id: string }>('/search', searchLimit, async (req, res, next) => {
       seriesId: context.seriesId,
       ...selection,
     };
+    // Indexers can return other seasons/series even for a scoped search. Filter
+    // before the display cap so unrelated hits cannot hide the requested season.
+    const matchingReleases = releases.filter(
+      (release) =>
+        releaseEpisodes(
+          release,
+          context.seriesId,
+          selection.seasonNumber,
+          context.episodes,
+          selection.episodeId
+        ).length
+    );
     res.json({
       expiresAt: new Date(Date.now() + 5 * 60000).toISOString(),
-      truncated: releases.length > 100,
-      releases: releases.slice(0, 100).map((release) => {
+      truncated: matchingReleases.length > 100,
+      releases: matchingReleases.slice(0, 100).map((release) => {
         const matched = releaseEpisodes(
           release,
           context.seriesId,

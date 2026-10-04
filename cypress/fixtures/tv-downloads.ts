@@ -127,23 +127,34 @@ export const mockDiagnostics = {
     }))
   ),
 };
-export const mockSearch = {
-  expiresAt: '2099-01-01T00:00:00Z',
-  truncated: false,
-  releases: [
-    {
-      token: 'a'.repeat(48),
-      title: 'Industry S03 mock season pack',
-      indexer: 'Mock indexer',
-      quality: 'WEBDL-1080p',
-      size: 1024 ** 3,
-      protocol: 'torrent',
-      seeders: 12,
-      fullSeason: true,
-      episodeNumbers: [1, 2, 3, 4, 5, 6, 7, 8],
-      rejected: true,
-      rejections: ['WEBDL-1080p is not wanted in profile'],
-      duplicate: true,
-    },
-  ],
-};
+export function mockSearchForSelection(season = 2, episodeId?: number) {
+  const episodeNumber = episodeId === undefined ? undefined : episodeId % 100;
+  const listing = {
+    token: 'a'.repeat(48),
+    title: `Industry S0${season} mock season pack`,
+    indexer: 'Mock indexer',
+    quality: 'WEBDL-1080p',
+    size: 1024 ** 3,
+    protocol: 'torrent',
+    seeders: 12,
+    fullSeason: true,
+    episodeNumbers: [1, 2, 3, 4, 5, 6, 7, 8],
+    rejected: true,
+    rejections: ['WEBDL-1080p is not wanted in profile'],
+    duplicate: true,
+  };
+  return {
+    expiresAt: '2099-01-01T00:00:00Z',
+    truncated: false,
+    releases: [
+      ...(episodeId === undefined ? [listing] : []),
+      {
+        ...listing,
+        token: 'b'.repeat(48),
+        title: `Industry S0${season}E0${episodeNumber ?? 1} mock episode`,
+        fullSeason: false,
+        episodeNumbers: [episodeNumber ?? 1],
+      },
+    ],
+  };
+}

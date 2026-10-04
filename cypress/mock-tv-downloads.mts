@@ -6,7 +6,7 @@ import https from 'node:https';
 import { createRequire } from 'node:module';
 import {
   mockDiagnostics,
-  mockSearch,
+  mockSearchForSelection,
   mockSettings,
   mockTv,
   mockUser,
@@ -81,8 +81,18 @@ http
         return send({ results: [], totalResults: 0, totalPages: 0 });
       case '/api/v1/tv/123/downloads':
         return send(mockDiagnostics, ordinary ? 403 : 200);
-      case '/api/v1/tv/123/downloads/search':
-        return send(mockSearch, ordinary ? 403 : 200);
+      case '/api/v1/tv/123/downloads/search': {
+        let body = '';
+        for await (const chunk of req) body += String(chunk);
+        const selection = JSON.parse(body) as {
+          seasonNumber: number;
+          episodeId?: number;
+        };
+        return send(
+          mockSearchForSelection(selection.seasonNumber, selection.episodeId),
+          ordinary ? 403 : 200
+        );
+      }
       // Browser tests must intercept every mutation; even this mock fails closed.
       case '/api/v1/tv/123/downloads/grab':
         return send({ message: 'Browser must intercept mock grabs.' }, 500);

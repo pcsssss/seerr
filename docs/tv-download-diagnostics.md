@@ -1,6 +1,6 @@
 # TV download diagnostics (experimental fork)
 
-Branch: `feature/tv-download-diagnostics`. No remote fork or production deployment is part of this change.
+Branch: `feature/tv-download-diagnostics`. The instructions below include isolated staging verification; deployment is a separate operation.
 
 ## Using the feature
 
@@ -10,7 +10,10 @@ Choose Standard / 4K and, when needed, a request-specific mapping. The current m
 
 The panel displays each season's imported count, episode monitoring, visible queue items, percentage downloaded, Sonarr states/messages and recent episode history. Imported means Sonarr has a file, not that Plex/Jellyfin has scanned it. `No file / no visible queue` is not a diagnosis of rejection or lack of search results. A warning with no messages is reported as an unexplained Sonarr warning, not a fabricated cause.
 
-**Search season releases** or **Find releases** explicitly asks Sonarr to query its indexers. This does not automatically download anything. Results include quality, indexer, size, protocol, seeders when available, mapped episode coverage, season packs and rejection reasons. Unknown/unmapped/disallowed releases remain visible but cannot be selected. Selecting a mapped release opens a confirmation; rejected releases and possible duplicates require explicit acknowledgments. Sending the selection uses Sonarr's cached `guid`/`indexerId` identity, never direct torrent submission or a client-provided download URL.
+Choose a season and click **Find sources**, or click **Find releases** beside an episode. An accessible source picker opens immediately, showing loading, any safe error, an empty state or the matching sources without scrolling past episode history. **Search again** retries the same target. **Close** (or Escape) cancels a pending search; canceled/stale responses cannot replace another season or episode's results.
+
+The search explicitly asks Sonarr to query its indexers; it does not automatically download anything. Only releases with verified mappings to the selected series/season (and episode for an episode search) are displayed, filtered **before** the 100-result cap. Results include quality, indexer, size, protocol, seeders, mapped episode coverage, clearly marked season packs/episode releases and rejection reasons. Disallowed releases cannot be selected. **Select release** changes the same dialog to confirmation, avoiding stacked modals. Rejected releases and possible duplicates require separate acknowledgments. **Back to sources** does not download. **Download through Sonarr** submits its cached `guid`/`indexerId` identity, never a client-provided URL. Selections expire after five minutes; expiry clears confirmation, disables selection and offers a fresh search. Success is reported next to the season controls.
+
 
 An existing download is **not canceled** when selecting another source. If a duplicate appears after search, the backend refuses an unacknowledged grab; refresh and search again to review it.
 
@@ -83,7 +86,7 @@ pnpm exec cypress run --config-file cypress.tv-downloads.config.ts
 
 The mock server binds only `127.0.0.1:15056` and serves the **actual production Next TV page** with synthetic settings, user and Industry-shaped episode data. It never starts Seerr's server, database or background jobs, reads production configuration, or calls Sonarr. Server-side outbound HTTP is restricted to this exact loopback endpoint; browser tests reject non-mock origins and intercept all grab requests. Unintercepted grabs fail closed even in the mock. Stop the mock process after testing.
 
-The regression spec exercises authorized page rendering, panel expansion, S2 queue warnings/progress, S3E8 numbering, explicit release search, the real Modal/Headless UI transition and portal, cancel without grab, both required acknowledgments, one simulated submit and panel collapse at 1440×1000 and 390×844. It also verifies ordinary users render the TV page without diagnostics requests. Unhandled browser exceptions fail the tests. Confirmation screenshots are written to the ignored `cypress/screenshots` directory. This verifies frontend runtime behavior, not real Sonarr downloads/imports or every mobile browser.
+The regression spec exercises immediate in-viewport source-picker opening, slow search loading, S2 packs and episode results, failure/empty/retry, canceled searches followed by a new S3E1 target, expiry/retry, a single dialog changing to confirmation, focus restoration, separate rejection/duplicate acknowledgments and one simulated submit at 1440×1000 and 390×844. Native keyboard verification also checks Tab cycling inside the portal. It also verifies ordinary users render the TV page without diagnostics requests. Unhandled browser exceptions fail the tests. Confirmation screenshots are written to the ignored `cypress/screenshots` directory. This verifies frontend runtime behavior, not real Sonarr downloads/imports or every mobile browser.
 
 ## Residual limitations
 
